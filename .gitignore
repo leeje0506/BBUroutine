@@ -1,18 +1,45 @@
+# Dependencies
 node_modules/
-.expo/
+.pnpm-store/
+.venv/
+venv/
+env/
+
+# Build outputs
 dist/
 build/
+target/
+
+# Expo / React Native
+.expo/
+apps/**/.expo/
+
+# Python cache and test artifacts
 __pycache__/
+*.py[cod]
+*$py.class
 .pytest_cache/
-.venv/
-*.pyc
-.DS_Store
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local environment and secrets
 .env
-.pnpm-store/
+.env.*
+!.env.example
+!.env.production.example
+
+# Local databases
 *.db
 *.sqlite
 *.sqlite3
 data/
 backend/data/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Local experiments
 apps/mobile2/
-apps/**/.expo/
