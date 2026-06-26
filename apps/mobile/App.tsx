@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { ppunaImages } from "./src/assets";
 import {
+  AuthSession,
   BreathingRecord,
   BreathingStats,
   CareSummary,
@@ -31,6 +32,7 @@ import {
   createHospitalVisit,
   createMealRecord,
   createMedicationLog,
+  createPet,
   getBreathingRecords,
   getBreathingStats,
   getCareSummary,
@@ -41,6 +43,8 @@ import {
   getMealRecords,
   getMedicationLogs,
   getSuggestions,
+  login,
+  setApiToken,
 } from "./src/api";
 import { colors } from "./src/theme";
 
@@ -69,9 +73,32 @@ const tabs: Array<{ key: Tab; label: string; icon: string }> = [
 ];
 
 export default function App() {
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [needsPetSetup, setNeedsPetSetup] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
   const [mode, setMode] = useState<Mode>("tabs");
   const [refreshKey, setRefreshKey] = useState(0);
+
+  function handleLogin(session: AuthSession) {
+    setApiToken(session.token);
+    setAuthSession(session);
+    setNeedsPetSetup(!session.pet);
+    setRefreshKey((value) => value + 1);
+  }
+
+  function handlePetCreated() {
+    setNeedsPetSetup(false);
+    setRefreshKey((value) => value + 1);
+  }
+
+  function handleLogout() {
+    setApiToken(null);
+    setAuthSession(null);
+    setNeedsPetSetup(false);
+    setMode("tabs");
+    setTab("home");
+  }
+
   function closeMode(shouldRefresh = false) {
     setMode("tabs");
     if (shouldRefresh) setRefreshKey((value) => value + 1);
@@ -85,7 +112,7 @@ export default function App() {
     if (tab === "records") return <RecordsScreen refreshKey={refreshKey} />;
     if (tab === "hospital") return <HospitalScreen refreshKey={refreshKey} />;
     if (tab === "expenses") return <ExpensesScreen refreshKey={refreshKey} />;
-    if (tab === "profile") return <ProfileScreen refreshKey={refreshKey} />;
+    if (tab === "profile") return <ProfileScreen refreshKey={refreshKey} session={authSession} onLogout={handleLogout} />;
     return (
       <HomeScreen
         refreshKey={refreshKey}
@@ -95,7 +122,29 @@ export default function App() {
         onAddHospital={() => setMode("hospital")}
       />
     );
-  }, [mode, tab, refreshKey]);
+  }, [mode, tab, refreshKey, authSession]);
+
+  if (!authSession) {
+    return (
+      <SafeAreaView style={styles.app}>
+        <StatusBar style="dark" />
+        <View style={styles.phone}>
+          <LoginScreen onLogin={handleLogin} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (needsPetSetup) {
+    return (
+      <SafeAreaView style={styles.app}>
+        <StatusBar style="dark" />
+        <View style={styles.phone}>
+          <PetSetupScreen displayName={authSession.display_name} onCreated={handlePetCreated} onLogout={handleLogout} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.app}>
@@ -105,6 +154,115 @@ export default function App() {
         {mode === "tabs" ? <TabBar active={tab} onChange={setTab} /> : null}
       </View>
     </SafeAreaView>
+  );
+}
+
+function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
+  const [username, setUsername] = useState("dev1");
+  const [password, setPassword] = useState("dev1");
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit() {
+    if (!username.trim() || !password.trim()) return;
+    setIsSubmitting(true);
+    setMessage("");
+    const session = await login({ username: username.trim(), password });
+    setIsSubmitting(false);
+    if (!session) {
+      setMessage("아이디나 비밀번호를 확인해 주세요");
+      return;
+    }
+    onLogin(session);
+  }
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.loginScreen}>
+      <ScrollView contentContainerStyle={styles.loginContent} keyboardShouldPersistTaps="handled">
+        <Image source={ppunaImages.face} style={styles.loginImage} />
+        <Text style={styles.loginTitle}>뿌루틴</Text>
+        <Text style={styles.loginSubtitle}>보호자별로 기록을 따로 보관해요</Text>
+        <View style={styles.loginCard}>
+          <Text style={styles.resultLabel}>아이디</Text>
+          <FormInput value={username} onChangeText={setUsername} placeholder="dev1 또는 bbunu" />
+          <Text style={styles.resultLabel}>비밀번호</Text>
+          <FormInput value={password} onChangeText={setPassword} placeholder="비밀번호" secureTextEntry />
+          <Pressable style={styles.saveButton} onPress={handleSubmit} disabled={isSubmitting}>
+            <Text style={styles.saveButtonText}>{isSubmitting ? "로그인 중" : "로그인"}</Text>
+          </Pressable>
+          <Text style={styles.formHint}>개발용 dev1/dev1, 뿌나누나 bbunu/bbunu</Text>
+          {message ? <Text style={styles.errorText}>{message}</Text> : null}
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function PetSetupScreen({
+  displayName,
+  onCreated,
+  onLogout,
+}: {
+  displayName: string;
+  onCreated: () => void;
+  onLogout: () => void;
+}) {
+  const [name, setName] = useState("뿌나");
+  const [birthDate, setBirthDate] = useState("");
+  const [weightKg, setWeightKg] = useState("");
+  const [conditions, setConditions] = useState("심장 관리, 신장 관리");
+  const [cautionNotes, setCautionNotes] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+
+  async function handleCreate() {
+    if (!name.trim()) return;
+    setSaveState("saving");
+    const saved = await createPet({
+      name: name.trim(),
+      species: "dog",
+      birth_date: birthDate.trim() || undefined,
+      weight_kg: parseOptionalNumber(weightKg),
+      conditions: conditions
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+      caution_notes: cautionNotes.trim() || undefined,
+    });
+    setSaveState(saved ? "saved" : "error");
+    if (saved) setTimeout(onCreated, 400);
+  }
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.loginScreen}>
+      <ScrollView contentContainerStyle={styles.loginContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.setupHeader}>
+          <View style={styles.flex}>
+            <Text style={styles.loginTitle}>강아지 등록</Text>
+            <Text style={styles.loginSubtitle}>{displayName} 계정에 돌봄 대상을 연결해요</Text>
+          </View>
+          <Image source={ppunaImages.face} style={styles.headerImage} />
+        </View>
+        <View style={styles.loginCard}>
+          <Text style={styles.resultLabel}>이름</Text>
+          <FormInput value={name} onChangeText={setName} placeholder="예: 뿌나" />
+          <Text style={styles.resultLabel}>생일</Text>
+          <FormInput value={birthDate} onChangeText={setBirthDate} placeholder="예: 2012-03-14" />
+          <Text style={styles.resultLabel}>몸무게</Text>
+          <FormInput value={weightKg} onChangeText={setWeightKg} placeholder="예: 5.2" keyboardType="decimal-pad" />
+          <Text style={styles.resultLabel}>건강 정보</Text>
+          <FormInput value={conditions} onChangeText={setConditions} placeholder="예: 심장 관리, 신장 관리" />
+          <Text style={styles.resultLabel}>주의사항</Text>
+          <FormInput value={cautionNotes} onChangeText={setCautionNotes} placeholder="복약, 호흡 측정 기준 등을 적어요" multiline />
+          <Pressable style={styles.saveButton} onPress={handleCreate} disabled={saveState === "saving"}>
+            <Text style={styles.saveButtonText}>{saveState === "saving" ? "저장 중" : "등록하고 시작"}</Text>
+          </Pressable>
+          {saveState === "error" ? <Text style={styles.errorText}>저장에 실패했어요. API 연결을 확인해 주세요.</Text> : null}
+        </View>
+        <Pressable style={styles.logoutTextButton} onPress={onLogout}>
+          <Text style={styles.removeText}>다른 계정으로 로그인</Text>
+        </Pressable>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -728,12 +886,14 @@ function FormInput({
   placeholder,
   keyboardType = "default",
   multiline = false,
+  secureTextEntry = false,
 }: {
   value: string;
   onChangeText: (value: string) => void;
   placeholder: string;
   keyboardType?: "default" | "decimal-pad" | "number-pad";
   multiline?: boolean;
+  secureTextEntry?: boolean;
 }) {
   return (
     <TextInput
@@ -743,6 +903,7 @@ function FormInput({
       placeholderTextColor={colors.muted}
       keyboardType={keyboardType}
       multiline={multiline}
+      secureTextEntry={secureTextEntry}
       style={[styles.formInput, multiline && styles.formInputMultiline]}
     />
   );
@@ -1089,7 +1250,15 @@ function ExpensesScreen({ refreshKey }: { refreshKey: number }) {
   );
 }
 
-function ProfileScreen({ refreshKey }: { refreshKey: number }) {
+function ProfileScreen({
+  refreshKey,
+  session,
+  onLogout,
+}: {
+  refreshKey: number;
+  session: AuthSession | null;
+  onLogout: () => void;
+}) {
   const [pet, setPet] = useState<PetProfile | null>(null);
 
   useEffect(() => {
@@ -1115,6 +1284,9 @@ function ProfileScreen({ refreshKey }: { refreshKey: number }) {
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Header title="프로필" subtitle="기본 정보를 DB에서 불러와요" image={ppunaImages.face} />
+      <View style={styles.connectionPill}>
+        <Text style={styles.connectionText}>{session ? `${session.display_name} 로그인 중` : "로그인 정보 없음"}</Text>
+      </View>
       <View style={styles.profileCard}>
         <Image source={ppunaImages.face} style={styles.profileImage} />
         <View style={styles.flex}>
@@ -1133,6 +1305,7 @@ function ProfileScreen({ refreshKey }: { refreshKey: number }) {
       <SettingRow label="알림" />
       <SettingRow label="데이터 내보내기" onPress={handleExport} />
       <SettingRow label="보호자 공유" />
+      <SettingRow label="로그아웃" onPress={onLogout} />
     </ScrollView>
   );
 }
@@ -1451,6 +1624,60 @@ const styles = StyleSheet.create({
   phone: {
     flex: 1,
     backgroundColor: colors.paper,
+  },
+  loginScreen: {
+    backgroundColor: colors.paper,
+    flex: 1,
+  },
+  loginContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
+  loginImage: {
+    alignSelf: "center",
+    height: 116,
+    marginBottom: 18,
+    width: 116,
+  },
+  loginTitle: {
+    color: colors.ink,
+    fontSize: 32,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  loginSubtitle: {
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 21,
+    marginBottom: 18,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  loginCard: {
+    backgroundColor: colors.ivory,
+    borderColor: colors.line,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 18,
+  },
+  setupHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 14,
+    marginBottom: 16,
+  },
+  logoutTextButton: {
+    alignItems: "center",
+    marginTop: 16,
+    padding: 12,
+  },
+  errorText: {
+    color: colors.coral,
+    fontSize: 12,
+    fontWeight: "900",
+    marginTop: 10,
+    textAlign: "center",
   },
   content: {
     padding: 24,

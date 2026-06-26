@@ -1,14 +1,19 @@
 import json
+import base64
+import hashlib
+import hmac
+import os
 from io import BytesIO
 from datetime import date, datetime, timedelta
 from zipfile import ZIP_DEFLATED, ZipFile
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.db import get_connection, init_db
+from app.db import get_connection, hash_password, init_db
 from app.schemas.records import (
+    AuthSession,
     BreathingRecord,
     BreathingRecordCreate,
     BreathingStats,
@@ -21,27 +26,67 @@ from app.schemas.records import (
     MedicationLog,
     MedicationLogCreate,
     PetProfile,
+    PetProfileCreate,
     Suggestions,
+    UserLogin,
 )
 
 router = APIRouter()
+AUTH_SECRET = os.environ.get("PPUROUTINE_AUTH_SECRET", "ppuroutine-local-dev-secret")
 
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def _current_pet_row():
+def _sign_username(username: str) -> str:
+    return hmac.new(AUTH_SECRET.encode("utf-8"), username.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _make_token(username: str) -> str:
+    payload = f"{username}:{_sign_username(username)}".encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii")
+
+
+def _username_from_token(token: str) -> str | None:
+    try:
+        decoded = base64.urlsafe_b64decode(token.encode("ascii")).decode("utf-8")
+        username, signature = decoded.split(":", 1)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not hmac.compare_digest(signature, _sign_username(username)):
+        return None
+    return username
+
+
+def _current_user_row(authorization: str | None = Header(default=None), token: str | None = None):
+    init_db()
+    raw_token = token
+    if authorization and authorization.startswith("Bearer "):
+        raw_token = authorization.removeprefix("Bearer ").strip()
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Login required")
+    username = _username_from_token(raw_token)
+    if username is None:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    with get_connection() as connection:
+        row = connection.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return row
+
+
+def _current_pet_row(user_id: str):
     init_db()
     with get_connection() as connection:
-        row = connection.execute("SELECT * FROM pets LIMIT 1").fetchone()
+        row = connection.execute("SELECT * FROM pets WHERE user_id = ? ORDER BY name LIMIT 1", (user_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Pet not found")
     return row
 
 
-def _current_pet_id() -> str:
-    return str(_current_pet_row()["id"])
+def _current_pet_id(user_id: str) -> str:
+    return str(_current_pet_row(user_id)["id"])
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -55,6 +100,7 @@ def _parse_date(value: str | None) -> date | None:
 def _pet_from_row(row) -> PetProfile:
     return PetProfile(
         id=UUID(row["id"]),
+        user_id=UUID(row["user_id"]) if row["user_id"] else None,
         name=row["name"],
         species=row["species"],
         birth_date=_parse_date(row["birth_date"]),
@@ -247,14 +293,62 @@ def _date_key(value: str) -> str:
     return datetime.fromisoformat(value).strftime("%Y-%m-%d")
 
 
+@router.post("/auth/login", response_model=AuthSession)
+def login(credentials: UserLogin) -> AuthSession:
+    init_db()
+    with get_connection() as connection:
+        user = connection.execute("SELECT * FROM users WHERE username = ?", (credentials.username,)).fetchone()
+        pet = None
+        if user:
+            pet = connection.execute("SELECT * FROM pets WHERE user_id = ? ORDER BY name LIMIT 1", (user["id"],)).fetchone()
+
+    if user is None or user["password_hash"] != hash_password(credentials.password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    return AuthSession(
+        token=_make_token(user["username"]),
+        username=user["username"],
+        display_name=user["display_name"],
+        pet=_pet_from_row(pet) if pet else None,
+    )
+
+
 @router.get("/pets/current", response_model=PetProfile)
-def get_current_pet() -> PetProfile:
-    return _pet_from_row(_current_pet_row())
+def get_current_pet(authorization: str | None = Header(default=None)) -> PetProfile:
+    user = _current_user_row(authorization)
+    return _pet_from_row(_current_pet_row(user["id"]))
+
+
+@router.post("/pets", response_model=PetProfile)
+def create_pet(record: PetProfileCreate, authorization: str | None = Header(default=None)) -> PetProfile:
+    user = _current_user_row(authorization)
+    pet_id = str(uuid4())
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO pets (
+                id, user_id, name, species, birth_date, weight_kg, conditions, caution_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pet_id,
+                user["id"],
+                record.name.strip(),
+                record.species,
+                record.birth_date.isoformat() if record.birth_date else None,
+                record.weight_kg,
+                ",".join(record.conditions),
+                record.caution_notes,
+            ),
+        )
+        row = connection.execute("SELECT * FROM pets WHERE id = ?", (pet_id,)).fetchone()
+    return _pet_from_row(row)
 
 
 @router.get("/care/summary", response_model=CareSummary)
-def get_care_summary() -> CareSummary:
-    pet_id = _current_pet_id()
+def get_care_summary(authorization: str | None = Header(default=None)) -> CareSummary:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         latest_breathing = connection.execute(
             """
@@ -308,8 +402,9 @@ def get_care_summary() -> CareSummary:
 
 
 @router.get("/breathing-records", response_model=list[BreathingRecord])
-def list_breathing_records() -> list[BreathingRecord]:
-    pet_id = _current_pet_id()
+def list_breathing_records(authorization: str | None = Header(default=None)) -> list[BreathingRecord]:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         rows = connection.execute(
             "SELECT * FROM breathing_records WHERE pet_id = ? ORDER BY measured_at DESC",
@@ -319,11 +414,12 @@ def list_breathing_records() -> list[BreathingRecord]:
 
 
 @router.get("/breathing-records/stats", response_model=BreathingStats)
-def get_breathing_stats(days: int = 7) -> BreathingStats:
+def get_breathing_stats(days: int = 7, authorization: str | None = Header(default=None)) -> BreathingStats:
     if days not in (7, 30):
         raise HTTPException(status_code=400, detail="days must be 7 or 30")
 
-    pet_id = _current_pet_id()
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     now = datetime.now()
     current_start = now - timedelta(days=days)
     previous_start = current_start - timedelta(days=days)
@@ -361,8 +457,9 @@ def get_breathing_stats(days: int = 7) -> BreathingStats:
 
 
 @router.post("/breathing-records", response_model=BreathingRecord)
-def create_breathing_record(record: BreathingRecordCreate) -> BreathingRecord:
-    pet_id = _current_pet_id()
+def create_breathing_record(record: BreathingRecordCreate, authorization: str | None = Header(default=None)) -> BreathingRecord:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     record_id = str(uuid4())
     measured_at = _now()
     breaths_per_minute = round(record.breath_count * 60 / record.duration_seconds)
@@ -390,8 +487,9 @@ def create_breathing_record(record: BreathingRecordCreate) -> BreathingRecord:
 
 
 @router.get("/medication-logs", response_model=list[MedicationLog])
-def list_medication_logs() -> list[MedicationLog]:
-    pet_id = _current_pet_id()
+def list_medication_logs(authorization: str | None = Header(default=None)) -> list[MedicationLog]:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         rows = connection.execute(
             "SELECT * FROM medication_logs WHERE pet_id = ? ORDER BY logged_at DESC",
@@ -401,8 +499,9 @@ def list_medication_logs() -> list[MedicationLog]:
 
 
 @router.post("/medication-logs", response_model=MedicationLog)
-def create_medication_log(record: MedicationLogCreate) -> MedicationLog:
-    pet_id = _current_pet_id()
+def create_medication_log(record: MedicationLogCreate, authorization: str | None = Header(default=None)) -> MedicationLog:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     record_id = str(uuid4())
     with get_connection() as connection:
         connection.execute(
@@ -418,8 +517,9 @@ def create_medication_log(record: MedicationLogCreate) -> MedicationLog:
 
 
 @router.get("/meal-records", response_model=list[MealRecord])
-def list_meal_records() -> list[MealRecord]:
-    pet_id = _current_pet_id()
+def list_meal_records(authorization: str | None = Header(default=None)) -> list[MealRecord]:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         rows = connection.execute(
             "SELECT * FROM meal_records WHERE pet_id = ? ORDER BY logged_at DESC",
@@ -429,8 +529,9 @@ def list_meal_records() -> list[MealRecord]:
 
 
 @router.post("/meal-records", response_model=MealRecord)
-def create_meal_record(record: MealRecordCreate) -> MealRecord:
-    pet_id = _current_pet_id()
+def create_meal_record(record: MealRecordCreate, authorization: str | None = Header(default=None)) -> MealRecord:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     record_id = str(uuid4())
     with get_connection() as connection:
         connection.execute(
@@ -456,8 +557,9 @@ def create_meal_record(record: MealRecordCreate) -> MealRecord:
 
 
 @router.get("/hospital-visits", response_model=list[HospitalVisit])
-def list_hospital_visits() -> list[HospitalVisit]:
-    pet_id = _current_pet_id()
+def list_hospital_visits(authorization: str | None = Header(default=None)) -> list[HospitalVisit]:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         rows = connection.execute(
             "SELECT * FROM hospital_visits WHERE pet_id = ? ORDER BY visited_at DESC",
@@ -467,8 +569,9 @@ def list_hospital_visits() -> list[HospitalVisit]:
 
 
 @router.post("/hospital-visits", response_model=HospitalVisit)
-def create_hospital_visit(record: HospitalVisitCreate) -> HospitalVisit:
-    pet_id = _current_pet_id()
+def create_hospital_visit(record: HospitalVisitCreate, authorization: str | None = Header(default=None)) -> HospitalVisit:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     record_id = str(uuid4())
     with get_connection() as connection:
         connection.execute(
@@ -500,8 +603,9 @@ def create_hospital_visit(record: HospitalVisitCreate) -> HospitalVisit:
 
 
 @router.get("/suggestions", response_model=Suggestions)
-def get_suggestions() -> Suggestions:
-    pet_id = _current_pet_id()
+def get_suggestions(authorization: str | None = Header(default=None)) -> Suggestions:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         medication_names = _distinct_values(
             connection,
@@ -562,8 +666,9 @@ def get_suggestions() -> Suggestions:
 
 
 @router.get("/expenses/summary", response_model=ExpenseSummary)
-def get_expense_summary() -> ExpenseSummary:
-    pet_id = _current_pet_id()
+def get_expense_summary(authorization: str | None = Header(default=None)) -> ExpenseSummary:
+    user = _current_user_row(authorization)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         total = connection.execute(
             "SELECT COALESCE(SUM(total_cost), 0) AS total FROM hospital_visits WHERE pet_id = ?",
@@ -580,8 +685,9 @@ def get_expense_summary() -> ExpenseSummary:
 
 
 @router.get("/export/excel")
-def export_excel():
-    pet_id = _current_pet_id()
+def export_excel(token: str | None = None, authorization: str | None = Header(default=None)):
+    user = _current_user_row(authorization, token)
+    pet_id = _current_pet_id(user["id"])
     with get_connection() as connection:
         breathing_rows = connection.execute(
             "SELECT * FROM breathing_records WHERE pet_id = ? ORDER BY measured_at ASC",

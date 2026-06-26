@@ -6,12 +6,34 @@ from pydantic import BaseModel, Field
 
 class PetProfile(BaseModel):
     id: UUID
+    user_id: UUID | None = None
     name: str
     species: str
     birth_date: date | None = None
     weight_kg: float | None = None
     conditions: list[str] = Field(default_factory=list)
     caution_notes: str | None = None
+
+
+class PetProfileCreate(BaseModel):
+    name: str
+    species: str = "dog"
+    birth_date: date | None = None
+    weight_kg: float | None = None
+    conditions: list[str] = Field(default_factory=list)
+    caution_notes: str | None = None
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class AuthSession(BaseModel):
+    token: str
+    username: str
+    display_name: str
+    pet: PetProfile | None = None
 
 
 class BreathingRecord(BaseModel):

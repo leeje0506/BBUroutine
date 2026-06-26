@@ -32,6 +32,7 @@ Render 설정 예시:
 - Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Environment:
   - `DATABASE_URL=postgresql://...?...sslmode=require`
+  - `PPUROUTINE_AUTH_SECRET=<랜덤 문자열>`
 
 모바일 실행 예시:
 

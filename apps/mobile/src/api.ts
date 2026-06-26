@@ -6,6 +6,13 @@ export type CareSummary = {
   monthly_expense: number;
 };
 
+export type AuthSession = {
+  token: string;
+  username: string;
+  display_name: string;
+  pet: PetProfile | null;
+};
+
 export type PetProfile = {
   id: string;
   name: string;
@@ -103,12 +110,23 @@ declare const process: {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+let apiToken: string | null = null;
+
+export function setApiToken(token: string | null) {
+  apiToken = token;
+}
+
+function authHeaders(): Record<string, string> {
+  return apiToken ? { Authorization: `Bearer ${apiToken}` } : {};
+}
 
 async function getJson<T>(path: string): Promise<T | null> {
   if (!API_URL) return null;
 
   try {
-    const response = await fetch(`${API_URL}${path}`);
+    const response = await fetch(`${API_URL}${path}`, {
+      headers: authHeaders(),
+    });
     if (!response.ok) return null;
     return (await response.json()) as T;
   } catch {
@@ -124,6 +142,7 @@ async function postJson<T>(path: string, payload: Record<string, unknown>): Prom
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...authHeaders(),
       },
       body: JSON.stringify(payload),
     });
@@ -135,8 +154,23 @@ async function postJson<T>(path: string, payload: Record<string, unknown>): Prom
   }
 }
 
+export async function login(payload: { username: string; password: string }) {
+  return postJson<AuthSession>("/api/auth/login", payload);
+}
+
 export async function getCurrentPet() {
   return getJson<PetProfile>("/api/pets/current");
+}
+
+export async function createPet(payload: {
+  name: string;
+  species?: string;
+  birth_date?: string;
+  weight_kg?: number;
+  conditions?: string[];
+  caution_notes?: string;
+}) {
+  return postJson<PetProfile>("/api/pets", payload);
 }
 
 export async function getCareSummary() {
@@ -216,5 +250,5 @@ export async function getExpenseSummary() {
 }
 
 export function getExportExcelUrl() {
-  return API_URL ? `${API_URL}/api/export/excel` : null;
+  return API_URL && apiToken ? `${API_URL}/api/export/excel?token=${encodeURIComponent(apiToken)}` : null;
 }

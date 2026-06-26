@@ -6,6 +6,12 @@ from app.main import app
 client = TestClient(app)
 
 
+def auth_headers(username: str = "dev1", password: str = "dev1") -> dict[str, str]:
+    response = client.post("/api/auth/login", json={"username": username, "password": password})
+    assert response.status_code == 200
+    return {"Authorization": f"Bearer {response.json()['token']}"}
+
+
 def test_health() -> None:
     response = client.get("/health")
     assert response.status_code == 200
@@ -13,15 +19,36 @@ def test_health() -> None:
 
 
 def test_current_pet() -> None:
-    response = client.get("/api/pets/current")
+    response = client.get("/api/pets/current", headers=auth_headers())
     assert response.status_code == 200
     assert response.json()["name"] == "뿌나"
+
+
+def test_bbunu_can_create_pet() -> None:
+    headers = auth_headers("bbunu", "bbunu")
+    response = client.post(
+        "/api/pets",
+        json={
+            "name": "뿌나테스트",
+            "species": "dog",
+            "birth_date": "2012-03-14",
+            "weight_kg": 5.2,
+            "conditions": ["심장 관리", "신장 관리"],
+            "caution_notes": "밤에 안정 시 호흡 수를 확인해요.",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "뿌나테스트"
+    assert data["conditions"] == ["심장 관리", "신장 관리"]
 
 
 def test_create_medication_log_with_dosage() -> None:
     response = client.post(
         "/api/medication-logs",
         json={"medication_name": "심장약", "dosage": "1/2정", "memo": "저녁 식후"},
+        headers=auth_headers(),
     )
     assert response.status_code == 200
     data = response.json()
@@ -40,6 +67,7 @@ def test_create_meal_record_with_food_detail() -> None:
             "amount_status": "일부 섭취",
             "memo": "닭가슴살 조금 섞음",
         },
+        headers=auth_headers(),
     )
     assert response.status_code == 200
     data = response.json()
@@ -69,6 +97,7 @@ def test_create_hospital_visit_with_details() -> None:
             "next_visit_interval_weeks": 2,
             "total_cost": 182000,
         },
+        headers=auth_headers(),
     )
     assert response.status_code == 200
     data = response.json()
@@ -80,7 +109,7 @@ def test_create_hospital_visit_with_details() -> None:
 
 
 def test_suggestions() -> None:
-    response = client.get("/api/suggestions")
+    response = client.get("/api/suggestions", headers=auth_headers())
     assert response.status_code == 200
     data = response.json()
     assert "마음동물병원" in data["hospital_names"]
@@ -90,11 +119,12 @@ def test_breathing_stats() -> None:
     create_response = client.post(
         "/api/breathing-records",
         json={"duration_seconds": 30, "breath_count": 12, "cough_observed": True},
+        headers=auth_headers(),
     )
     assert create_response.status_code == 200
     assert create_response.json()["cough_observed"] is True
 
-    response = client.get("/api/breathing-records/stats?days=7")
+    response = client.get("/api/breathing-records/stats?days=7", headers=auth_headers())
     assert response.status_code == 200
     data = response.json()
     assert data["days"] == 7
@@ -103,7 +133,7 @@ def test_breathing_stats() -> None:
 
 
 def test_export_excel() -> None:
-    response = client.get("/api/export/excel")
+    response = client.get("/api/export/excel", headers=auth_headers())
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert response.content.startswith(b"PK")

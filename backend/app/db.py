@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from hashlib import sha256
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -23,6 +24,12 @@ if load_dotenv is not None and os.environ.get("PPUROUTINE_SKIP_DOTENV") != "1":
 
 DB_PATH = Path(os.environ.get("PPUROUTINE_DB_PATH", Path(__file__).resolve().parents[2] / "data" / "ppuroutine.db"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
+DEV_USER_ID = "00000000-0000-4000-8000-000000000001"
+BBUNU_USER_ID = "00000000-0000-4000-8000-000000000002"
+
+
+def hash_password(password: str) -> str:
+    return sha256(password.encode("utf-8")).hexdigest()
 
 
 class PostgresConnection:
@@ -85,12 +92,20 @@ def _init_sqlite() -> None:
             """
             CREATE TABLE IF NOT EXISTS pets (
                 id TEXT PRIMARY KEY,
+                user_id TEXT,
                 name TEXT NOT NULL,
                 species TEXT NOT NULL,
                 birth_date TEXT,
                 weight_kg REAL,
                 conditions TEXT NOT NULL DEFAULT '',
                 caution_notes TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS breathing_records (
@@ -147,6 +162,7 @@ def _init_sqlite() -> None:
             );
             """
         )
+        _ensure_sqlite_column(connection, "pets", "user_id", "TEXT")
         _ensure_sqlite_column(connection, "breathing_records", "cough_observed", "INTEGER NOT NULL DEFAULT 0")
         _ensure_sqlite_column(connection, "medication_logs", "dosage", "TEXT")
         _ensure_sqlite_column(connection, "meal_records", "food_name", "TEXT")
@@ -156,6 +172,8 @@ def _init_sqlite() -> None:
         _ensure_sqlite_column(connection, "hospital_visits", "attachments", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_sqlite_column(connection, "hospital_visits", "next_visit_interval_weeks", "INTEGER")
         _repair_hospital_visit_dates(connection)
+        _seed_default_users(connection)
+        _assign_existing_pets(connection)
         _seed_default_pet(connection)
 
 
@@ -164,12 +182,21 @@ def _init_postgres() -> None:
         """
         CREATE TABLE IF NOT EXISTS pets (
             id TEXT PRIMARY KEY,
+            user_id TEXT,
             name TEXT NOT NULL,
             species TEXT NOT NULL,
             birth_date TEXT,
             weight_kg REAL,
             conditions TEXT NOT NULL DEFAULT '',
             caution_notes TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            display_name TEXT NOT NULL
         )
         """,
         """
@@ -230,6 +257,7 @@ def _init_postgres() -> None:
     with get_connection() as connection:
         for statement in statements:
             connection.execute(statement)
+        _ensure_postgres_column(connection, "pets", "user_id", "TEXT")
         _ensure_postgres_column(connection, "breathing_records", "cough_observed", "INTEGER NOT NULL DEFAULT 0")
         _ensure_postgres_column(connection, "medication_logs", "dosage", "TEXT")
         _ensure_postgres_column(connection, "meal_records", "food_name", "TEXT")
@@ -239,20 +267,41 @@ def _init_postgres() -> None:
         _ensure_postgres_column(connection, "hospital_visits", "attachments", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_postgres_column(connection, "hospital_visits", "next_visit_interval_weeks", "INTEGER")
         _repair_hospital_visit_dates(connection)
+        _seed_default_users(connection)
+        _assign_existing_pets(connection)
         _seed_default_pet(connection)
 
 
+def _seed_default_users(connection) -> None:
+    users = [
+        (DEV_USER_ID, "dev1", hash_password("dev1"), "개발자"),
+        (BBUNU_USER_ID, "bbunu", hash_password("bbunu"), "뿌나누나"),
+    ]
+    for user in users:
+        existing = connection.execute("SELECT id FROM users WHERE username = ?", (user[1],)).fetchone()
+        if existing is None:
+            connection.execute(
+                "INSERT INTO users (id, username, password_hash, display_name) VALUES (?, ?, ?, ?)",
+                user,
+            )
+
+
+def _assign_existing_pets(connection) -> None:
+    connection.execute("UPDATE pets SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (DEV_USER_ID,))
+
+
 def _seed_default_pet(connection) -> None:
-    row = connection.execute("SELECT COUNT(*) AS count FROM pets").fetchone()
+    row = connection.execute("SELECT COUNT(*) AS count FROM pets WHERE user_id = ?", (DEV_USER_ID,)).fetchone()
     if row["count"] == 0:
         connection.execute(
             """
             INSERT INTO pets (
-                id, name, species, birth_date, weight_kg, conditions, caution_notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                id, user_id, name, species, birth_date, weight_kg, conditions, caution_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(uuid4()),
+                DEV_USER_ID,
                 "뿌나",
                 "dog",
                 "2012-03-14",
