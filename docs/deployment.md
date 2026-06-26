@@ -2,10 +2,10 @@
 
 ## 추천 구조
 
-- 모바일 앱: Expo Go 테스트, 이후 EAS Build/TestFlight 또는 APK로 공유
+- 모바일 앱: Expo Go 테스트, 빠른 공유는 Vercel 모바일 웹 링크, 이후 EAS Build/TestFlight
 - 백엔드: Render Web Service
 - DB: 로컬은 SQLite, 배포는 Supabase Postgres 권장
-- Vercel: 모바일 앱 배포용이 아니라 웹 미리보기용으로만 사용
+- Vercel: 친구 테스트용 모바일 웹 배포
 
 ## 로컬 개발
 
@@ -41,6 +41,20 @@ EXPO_PUBLIC_API_URL=https://your-ppuroutine-api.onrender.com pnpm expo start
 ```
 
 SQLite로 Render를 테스트할 수도 있지만, 이 경우 persistent disk를 붙이지 않으면 서버 재시작 때 기록이 사라질 수 있다.
+
+## Vercel 모바일 웹 배포
+
+친구가 iPhone Safari로 테스트할 수 있게 `apps/mobile`을 Vercel에 배포한다.
+
+- Framework Preset: Other
+- Root Directory: `apps/mobile`
+- Install Command: `pnpm install`
+- Build Command: `pnpm build:web`
+- Output Directory: `dist`
+- Environment:
+  - `EXPO_PUBLIC_API_URL=https://bburoutine.onrender.com`
+
+Vercel 배포 후 생성된 URL을 친구에게 보내면 된다. Expo Go QR과 달리 내 컴퓨터가 꺼져 있어도 화면이 열린다.
 
 ## 엑셀 내보내기
 
