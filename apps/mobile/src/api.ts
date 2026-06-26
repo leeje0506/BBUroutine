@@ -109,7 +109,7 @@ declare const process: {
   };
 };
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "https://bburoutine.onrender.com";
 let apiToken: string | null = null;
 
 export function setApiToken(token: string | null) {
