@@ -1,0 +1,10 @@
+{
+  "name": "ppuroutine",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "mobile": "pnpm --dir apps/mobile start",
+    "backend": "cd backend && uvicorn app.main:app --reload",
+    "typecheck:mobile": "pnpm --dir apps/mobile typecheck"
+  }
+}

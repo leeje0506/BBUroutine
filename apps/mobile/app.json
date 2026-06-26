@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "뿌루틴",
+    "slug": "ppuroutine",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#F8F4EA"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
