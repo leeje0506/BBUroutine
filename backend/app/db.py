@@ -7,11 +7,19 @@ from pathlib import Path
 from uuid import uuid4
 
 try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - production installs this, tests can run without it
+    load_dotenv = None
+
+try:
     import psycopg
     from psycopg.rows import dict_row
 except ImportError:  # pragma: no cover - optional in local SQLite-only setup
     psycopg = None
     dict_row = None
+
+if load_dotenv is not None and os.environ.get("PPUROUTINE_SKIP_DOTENV") != "1":
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DB_PATH = Path(os.environ.get("PPUROUTINE_DB_PATH", Path(__file__).resolve().parents[2] / "data" / "ppuroutine.db"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
