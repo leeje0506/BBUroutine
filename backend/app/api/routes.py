@@ -152,7 +152,8 @@ def _average_breathing(connection, pet_id: str, start_at: datetime, end_at: date
 
 def _distinct_values(connection, query: str, params: tuple[str, ...]) -> list[str]:
     rows = connection.execute(query, params).fetchall()
-    values = [row[0] for row in rows if row[0]]
+    values = [next(iter(row.values())) if isinstance(row, dict) else row[0] for row in rows]
+    values = [value for value in values if value]
     return list(dict.fromkeys(values))
 
 
@@ -331,8 +332,8 @@ def get_breathing_stats(days: int = 7) -> BreathingStats:
         current = _average_breathing(connection, pet_id, current_start, now)
         previous = _average_breathing(connection, pet_id, previous_start, current_start)
 
-    current_average = round(current["average"], 1) if current["average"] is not None else None
-    previous_average = round(previous["average"], 1) if previous["average"] is not None else None
+    current_average = round(float(current["average"]), 1) if current["average"] is not None else None
+    previous_average = round(float(previous["average"]), 1) if previous["average"] is not None else None
     difference = (
         round(current_average - previous_average, 1)
         if current_average is not None and previous_average is not None
