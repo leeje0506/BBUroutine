@@ -150,7 +150,7 @@ export default function App() {
     <SafeAreaView style={styles.app}>
       <StatusBar style="dark" />
       <View style={styles.phone}>
-        {screen}
+        <View style={styles.screen}>{screen}</View>
         {mode === "tabs" ? <TabBar active={tab} onChange={setTab} /> : null}
       </View>
     </SafeAreaView>
@@ -1625,6 +1625,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.paper,
   },
+  screen: {
+    flex: 1,
+    minHeight: 0,
+  },
   loginScreen: {
     backgroundColor: colors.paper,
     flex: 1,
@@ -1681,7 +1685,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 24,
-    paddingBottom: 116,
+    paddingBottom: 32,
   },
   header: {
     alignItems: "center",
@@ -2064,12 +2068,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.ivory,
     borderColor: colors.line,
     borderTopWidth: 1,
-    bottom: 0,
+    flexShrink: 0,
     flexDirection: "row",
     height: 82,
-    left: 0,
-    position: "absolute",
-    right: 0,
   },
   tabItem: {
     alignItems: "center",
