@@ -110,9 +110,20 @@ declare const process: {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "https://bburoutine.onrender.com";
+const GET_CACHE_TTL_MS = 2 * 60 * 1000;
 let apiToken: string | null = null;
+let cacheGeneration = 0;
+const responseCache = new Map<string, { value: unknown; expiresAt: number }>();
+const pendingGetRequests = new Map<string, Promise<unknown | null>>();
+
+function invalidateApiCache() {
+  cacheGeneration += 1;
+  responseCache.clear();
+  pendingGetRequests.clear();
+}
 
 export function setApiToken(token: string | null) {
+  if (apiToken !== token) invalidateApiCache();
   apiToken = token;
 }
 
@@ -120,7 +131,11 @@ function authHeaders(): Record<string, string> {
   return apiToken ? { Authorization: `Bearer ${apiToken}` } : {};
 }
 
-async function getJson<T>(path: string): Promise<T | null> {
+function getCacheKey(path: string) {
+  return `${apiToken ?? "anonymous"}:${path}`;
+}
+
+async function fetchJson<T>(path: string): Promise<T | null> {
   if (!API_URL) return null;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -140,6 +155,34 @@ async function getJson<T>(path: string): Promise<T | null> {
   return null;
 }
 
+async function getJson<T>(path: string): Promise<T | null> {
+  const cacheKey = getCacheKey(path);
+  const cached = responseCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value as T;
+
+  const pending = pendingGetRequests.get(cacheKey);
+  if (pending) return pending as Promise<T | null>;
+
+  const requestGeneration = cacheGeneration;
+  let request: Promise<T | null>;
+  request = fetchJson<T>(path)
+    .then((value) => {
+      if (value !== null && requestGeneration === cacheGeneration) {
+        responseCache.set(cacheKey, {
+          value,
+          expiresAt: Date.now() + GET_CACHE_TTL_MS,
+        });
+      }
+      return value;
+    })
+    .finally(() => {
+      if (pendingGetRequests.get(cacheKey) === request) pendingGetRequests.delete(cacheKey);
+    });
+
+  pendingGetRequests.set(cacheKey, request);
+  return request;
+}
+
 async function postJson<T>(path: string, payload: Record<string, unknown>): Promise<T | null> {
   if (!API_URL) return null;
 
@@ -154,7 +197,9 @@ async function postJson<T>(path: string, payload: Record<string, unknown>): Prom
     });
 
     if (!response.ok) return null;
-    return (await response.json()) as T;
+    const value = (await response.json()) as T;
+    invalidateApiCache();
+    return value;
   } catch {
     return null;
   }
@@ -253,6 +298,19 @@ export async function createHospitalVisit(payload: {
 
 export async function getExpenseSummary() {
   return getJson<ExpenseSummary>("/api/expenses/summary");
+}
+
+export async function prefetchCareData() {
+  await Promise.all([
+    getCurrentPet(),
+    getCareSummary(),
+    getBreathingRecords(),
+    getMedicationLogs(),
+    getMealRecords(),
+    getHospitalVisits(),
+    getExpenseSummary(),
+    getSuggestions(),
+  ]);
 }
 
 export function getExportExcelUrl() {

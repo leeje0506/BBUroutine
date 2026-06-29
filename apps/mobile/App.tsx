@@ -44,6 +44,7 @@ import {
   getMedicationLogs,
   getSuggestions,
   login,
+  prefetchCareData,
   setApiToken,
 } from "./src/api";
 import { colors } from "./src/theme";
@@ -82,6 +83,7 @@ export default function App() {
 
   function handleLogin(session: AuthSession) {
     setApiToken(session.token);
+    if (session.pet) void prefetchCareData();
     setAuthSession(session);
     setNeedsPetSetup(!session.pet);
     setRefreshKey((value) => value + 1);
