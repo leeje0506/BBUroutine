@@ -1,7 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import * as DocumentPicker from "expo-document-picker";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
   ImageSourcePropType,
@@ -190,7 +190,29 @@ function LoginScreen({ onLogin }: { onLogin: (session: AuthSession) => void }) {
           <Pressable style={styles.saveButton} onPress={handleSubmit} disabled={isSubmitting}>
             <Text style={styles.saveButtonText}>{isSubmitting ? "로그인 중" : "로그인"}</Text>
           </Pressable>
-          <Text style={styles.formHint}>개발용 dev1/dev1, 뿌나누나 bbunu/bbunu</Text>
+          <Text style={styles.loginPresetLabel}>계정 빠른 입력</Text>
+          <View style={styles.loginPresetRow}>
+            <Pressable
+              style={[styles.loginPresetButton, username === "dev1" && styles.loginPresetButtonActive]}
+              onPress={() => {
+                setUsername("dev1");
+                setPassword("dev1");
+                setMessage("");
+              }}
+            >
+              <Text style={[styles.loginPresetText, username === "dev1" && styles.loginPresetTextActive]}>개발자</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.loginPresetButton, username === "bbunu" && styles.loginPresetButtonActive]}
+              onPress={() => {
+                setUsername("bbunu");
+                setPassword("bbunu");
+                setMessage("");
+              }}
+            >
+              <Text style={[styles.loginPresetText, username === "bbunu" && styles.loginPresetTextActive]}>뿌나누나</Text>
+            </Pressable>
+          </View>
           {message ? <Text style={styles.errorText}>{message}</Text> : null}
         </View>
       </ScrollView>
@@ -382,6 +404,7 @@ function HomeScreen({
 }
 
 function BreathingMeasureScreen({ onClose }: { onClose: (shouldRefresh?: boolean) => void }) {
+  const scrollRef = useRef<ScrollView>(null);
   const [duration, setDuration] = useState(30);
   const [remaining, setRemaining] = useState(30);
   const [count, setCount] = useState(0);
@@ -406,6 +429,12 @@ function BreathingMeasureScreen({ onClose }: { onClose: (shouldRefresh?: boolean
 
     return () => clearInterval(timer);
   }, [isRunning, remaining]);
+
+  useEffect(() => {
+    if (!isDone) return;
+    const timer = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    return () => clearTimeout(timer);
+  }, [isDone]);
 
   function reset(nextDuration = duration) {
     setDuration(nextDuration);
@@ -440,7 +469,12 @@ function BreathingMeasureScreen({ onClose }: { onClose: (shouldRefresh?: boolean
   return (
     <View style={styles.breathingScreen}>
       <StatusBar style="light" />
-      <ScrollView contentContainerStyle={styles.breathingMeasureContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.breathingScroll}
+        contentContainerStyle={styles.breathingMeasureContent}
+        showsVerticalScrollIndicator
+      >
         <View style={styles.breathingHeader}>
           <Pressable onPress={() => onClose(false)} style={styles.closeButton}>
             <Text style={styles.closeButtonText}>←</Text>
@@ -1622,14 +1656,18 @@ const styles = StyleSheet.create({
   app: {
     flex: 1,
     backgroundColor: colors.paper,
+    overflow: "hidden",
   },
   phone: {
     flex: 1,
     backgroundColor: colors.paper,
+    minHeight: 0,
+    overflow: "hidden",
   },
   screen: {
     flex: 1,
     minHeight: 0,
+    overflow: "hidden",
   },
   loginScreen: {
     backgroundColor: colors.paper,
@@ -1666,6 +1704,40 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     padding: 18,
+  },
+  loginPresetLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "800",
+    marginBottom: 8,
+    marginTop: 16,
+    textAlign: "center",
+  },
+  loginPresetRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  loginPresetButton: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.line,
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    height: 44,
+    justifyContent: "center",
+  },
+  loginPresetButtonActive: {
+    backgroundColor: colors.mint,
+    borderColor: colors.sageDark,
+  },
+  loginPresetText: {
+    color: colors.ink,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  loginPresetTextActive: {
+    color: colors.sageDark,
   },
   setupHeader: {
     alignItems: "center",
@@ -2095,6 +2167,11 @@ const styles = StyleSheet.create({
   },
   breathingScreen: {
     backgroundColor: colors.dark,
+    flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  breathingScroll: {
     flex: 1,
   },
   breathingMeasureContent: {
