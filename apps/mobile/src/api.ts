@@ -123,15 +123,21 @@ function authHeaders(): Record<string, string> {
 async function getJson<T>(path: string): Promise<T | null> {
   if (!API_URL) return null;
 
-  try {
-    const response = await fetch(`${API_URL}${path}`, {
-      headers: authHeaders(),
-    });
-    if (!response.ok) return null;
-    return (await response.json()) as T;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(`${API_URL}${path}`, {
+        headers: authHeaders(),
+      });
+      if (response.ok) return (await response.json()) as T;
+      if (response.status < 500) return null;
+    } catch {
+      // A sleeping free Render instance can briefly fail its first request.
+    }
+
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1200));
   }
+
+  return null;
 }
 
 async function postJson<T>(path: string, payload: Record<string, unknown>): Promise<T | null> {

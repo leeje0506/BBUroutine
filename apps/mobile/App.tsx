@@ -51,6 +51,7 @@ import { colors } from "./src/theme";
 type Tab = "home" | "records" | "hospital" | "expenses" | "profile";
 type Mode = "tabs" | "breathing" | "medication" | "meal" | "hospital";
 type SaveState = "idle" | "saving" | "saved" | "error";
+type LoadState = "loading" | "ready" | "error";
 type RecordPeriod = "today" | "7d" | "30d";
 type RecordKind = "all" | "breathing" | "medication" | "meal" | "hospital";
 type MedicationDraft = { name: string; dosageAmount: string; dosageUnit: string };
@@ -303,18 +304,19 @@ function HomeScreen({
 }) {
   const [pet, setPet] = useState<PetProfile | null>(null);
   const [summary, setSummary] = useState<CareSummary | null>(null);
-  const [apiState, setApiState] = useState<"checking" | "connected" | "local">("checking");
+  const [apiState, setApiState] = useState<"checking" | "connected" | "error">("checking");
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadHomeData() {
+      setApiState("checking");
       const [nextPet, nextSummary] = await Promise.all([getCurrentPet(), getCareSummary()]);
       if (!isMounted) return;
 
       setPet(nextPet);
       setSummary(nextSummary);
-      setApiState(nextPet && nextSummary ? "connected" : "local");
+      setApiState(nextPet && nextSummary ? "connected" : "error");
     }
 
     loadHomeData();
@@ -323,19 +325,31 @@ function HomeScreen({
     };
   }, [refreshKey]);
 
-  const petName = pet?.name ?? "연결 필요";
-  const medicationStatus = summary?.medication_status ?? "복약 기록 없음";
-  const mealStatus = summary?.meal_status ?? "식사 기록 없음";
+  const isHomeLoading = apiState === "checking";
+  const headerTitle = isHomeLoading ? "돌봄 기록을 불러오는 중" : pet ? `${pet.name}의 오늘` : "연결 필요";
+  const fallbackStatus = apiState === "error" ? "불러오지 못했어요" : "기록 없음";
+  const medicationStatus = isHomeLoading ? "불러오는 중..." : summary?.medication_status ?? fallbackStatus;
+  const mealStatus = isHomeLoading ? "불러오는 중..." : summary?.meal_status ?? fallbackStatus;
   const latestBreathing = summary?.latest_breaths_per_minute;
   const monthlyExpense = summary?.monthly_expense ?? 0;
-  const nextVisit = summary?.next_visit_at ? formatDateTime(summary.next_visit_at) : "예약 기록 없음";
+  const nextVisit = isHomeLoading
+    ? "불러오는 중..."
+    : summary?.next_visit_at
+      ? formatDateTime(summary.next_visit_at)
+      : apiState === "error"
+        ? "불러오지 못했어요"
+        : "예약 기록 없음";
 
   const homeRoutines = [
     { title: "저녁약", detail: medicationStatus, image: ppunaImages.medicine },
     { title: "저녁 식사", detail: mealStatus, image: ppunaImages.meal },
     {
       title: "호흡 측정",
-      detail: latestBreathing === null || latestBreathing === undefined ? "호흡 기록 없음" : `${latestBreathing}회/분 최근 기록`,
+      detail: isHomeLoading
+        ? "불러오는 중..."
+        : latestBreathing === null || latestBreathing === undefined
+          ? apiState === "error" ? "불러오지 못했어요" : "호흡 기록 없음"
+          : `${latestBreathing}회/분 최근 기록`,
       image: ppunaImages.sleep,
     },
     { title: "다음 예약", detail: nextVisit, image: ppunaImages.hospital },
@@ -344,7 +358,7 @@ function HomeScreen({
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Header
-        title={`${petName}의 오늘`}
+        title={headerTitle}
         subtitle="약, 식사, 병원 기록을 가볍게 챙겨요"
         image={ppunaImages.face}
       />
@@ -353,8 +367,8 @@ function HomeScreen({
           {apiState === "connected"
             ? "API 연결됨"
             : apiState === "checking"
-              ? "API 확인 중"
-              : "API 연결 필요"}
+              ? "서버에서 기록 불러오는 중"
+              : "기록을 불러오지 못했어요"}
         </Text>
       </View>
 
@@ -388,13 +402,17 @@ function HomeScreen({
       <View style={styles.summaryRow}>
         <SummaryCard
           title="최근 호흡"
-          value={latestBreathing === null || latestBreathing === undefined ? "기록 없음" : `${latestBreathing}회/분`}
+          value={isHomeLoading
+            ? "불러오는 중"
+            : latestBreathing === null || latestBreathing === undefined
+              ? apiState === "error" ? "확인 필요" : "기록 없음"
+              : `${latestBreathing}회/분`}
           caption="DB 최신 기록"
           image={ppunaImages.sleep}
         />
         <SummaryCard
           title="이번 달 비용"
-          value={`${monthlyExpense.toLocaleString("ko-KR")}원`}
+          value={isHomeLoading ? "불러오는 중" : apiState === "error" ? "확인 필요" : `${monthlyExpense.toLocaleString("ko-KR")}원`}
           caption="DB 누적"
           image={ppunaImages.expense}
         />
@@ -1056,6 +1074,7 @@ function RecordsScreen({ refreshKey }: { refreshKey: number }) {
   const [period, setPeriod] = useState<RecordPeriod>("today");
   const [kind, setKind] = useState<RecordKind>("all");
   const [breathingStats, setBreathingStats] = useState<BreathingStats | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
   const [items, setItems] = useState<
     Array<{
       id: string;
@@ -1073,6 +1092,7 @@ function RecordsScreen({ refreshKey }: { refreshKey: number }) {
     let isMounted = true;
 
     async function loadRecords() {
+      setLoadState("loading");
       const statsDays = period === "30d" ? 30 : 7;
       const [breathing, medications, meals, visits, nextStats] = await Promise.all([
         getBreathingRecords(),
@@ -1082,6 +1102,11 @@ function RecordsScreen({ refreshKey }: { refreshKey: number }) {
         kind === "breathing" && period !== "today" ? getBreathingStats(statsDays) : Promise.resolve(null),
       ]);
       if (!isMounted) return;
+
+      if (!breathing || !medications || !meals || !visits) {
+        setLoadState("error");
+        return;
+      }
 
       const nextItems = [
         ...(breathing ?? []).map((item) => ({
@@ -1144,6 +1169,7 @@ function RecordsScreen({ refreshKey }: { refreshKey: number }) {
 
       setItems(nextItems);
       setBreathingStats(nextStats);
+      setLoadState("ready");
     }
 
     loadRecords();
@@ -1170,8 +1196,12 @@ function RecordsScreen({ refreshKey }: { refreshKey: number }) {
         activeIndex={["all", "breathing", "medication", "meal", "hospital"].indexOf(kind)}
         onChange={(index) => setKind((["all", "breathing", "medication", "meal", "hospital"] as const)[index])}
       />
-      {kind === "breathing" && period !== "today" ? <BreathingStatsCard stats={breathingStats} /> : null}
-      {filteredItems.length === 0 ? (
+      {kind === "breathing" && period !== "today" && loadState === "ready" ? <BreathingStatsCard stats={breathingStats} /> : null}
+      {loadState === "loading" ? (
+        <DataState title="기록을 불러오는 중이에요" detail="서버가 깨어나는 동안 잠시만 기다려 주세요." />
+      ) : loadState === "error" ? (
+        <DataState title="기록을 불러오지 못했어요" detail="잠시 후 화면을 다시 열어 주세요." />
+      ) : filteredItems.length === 0 ? (
         <EmptyState image={ppunaImages.face} title="아직 기록이 없어요" detail="빠른 기록으로 첫 데이터를 남겨보세요." />
       ) : (
         filteredItems.map((item) => (
@@ -1191,13 +1221,21 @@ function RecordsScreen({ refreshKey }: { refreshKey: number }) {
 
 function HospitalScreen({ refreshKey }: { refreshKey: number }) {
   const [visits, setVisits] = useState<HospitalVisit[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadVisits() {
+      setLoadState("loading");
       const nextVisits = await getHospitalVisits();
-      if (isMounted) setVisits(nextVisits ?? []);
+      if (!isMounted) return;
+      if (!nextVisits) {
+        setLoadState("error");
+        return;
+      }
+      setVisits(nextVisits);
+      setLoadState("ready");
     }
 
     loadVisits();
@@ -1215,12 +1253,20 @@ function HospitalScreen({ refreshKey }: { refreshKey: number }) {
         <Image source={ppunaImages.hospital} style={styles.appointmentImage} />
         <View style={styles.flex}>
           <Text style={styles.eyebrow}>다음 예약</Text>
-          <Text style={styles.cardValue}>{nextVisit?.next_visit_at ? formatDateTime(nextVisit.next_visit_at) : "예약 기록 없음"}</Text>
-          <Text style={styles.cardCaption}>{nextVisit ? `${nextVisit.hospital_name} · ${nextVisit.reason}` : "병원 기록에서 다음 예약을 추가할 예정이에요"}</Text>
+          <Text style={styles.cardValue}>
+            {loadState === "loading" ? "불러오는 중" : loadState === "error" ? "확인 필요" : nextVisit?.next_visit_at ? formatDateTime(nextVisit.next_visit_at) : "예약 기록 없음"}
+          </Text>
+          <Text style={styles.cardCaption}>
+            {loadState === "loading" ? "서버에서 예약을 확인하고 있어요" : loadState === "error" ? "예약을 불러오지 못했어요" : nextVisit ? `${nextVisit.hospital_name} · ${nextVisit.reason}` : "병원 기록에서 다음 예약을 추가할 예정이에요"}
+          </Text>
         </View>
       </View>
       <Text style={styles.sectionTitle}>최근 방문</Text>
-      {visits.length === 0 ? (
+      {loadState === "loading" ? (
+        <DataState title="병원 기록을 불러오는 중이에요" detail="잠시만 기다려 주세요." />
+      ) : loadState === "error" ? (
+        <DataState title="병원 기록을 불러오지 못했어요" detail="잠시 후 다시 확인해 주세요." />
+      ) : visits.length === 0 ? (
         <EmptyState image={ppunaImages.hospital} title="병원 기록 없음" detail="빠른 기록에서 첫 방문 기록을 저장해 보세요." />
       ) : (
         visits.map((visit) => (
@@ -1239,13 +1285,17 @@ function HospitalScreen({ refreshKey }: { refreshKey: number }) {
 
 function ExpensesScreen({ refreshKey }: { refreshKey: number }) {
   const [summary, setSummary] = useState<ExpenseSummary | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadExpense() {
+      setLoadState("loading");
       const nextSummary = await getExpenseSummary();
-      if (isMounted) setSummary(nextSummary);
+      if (!isMounted) return;
+      setSummary(nextSummary);
+      setLoadState(nextSummary ? "ready" : "error");
     }
 
     loadExpense();
@@ -1263,13 +1313,17 @@ function ExpensesScreen({ refreshKey }: { refreshKey: number }) {
       <View style={styles.totalCard}>
         <Image source={ppunaImages.expense} style={styles.totalImage} />
         <View>
-          <Text style={styles.eyebrow}>{summary?.month ?? "DB 연결 필요"}</Text>
-          <Text style={styles.totalValue}>{total.toLocaleString("ko-KR")}원</Text>
+          <Text style={styles.eyebrow}>{loadState === "loading" ? "DB 확인 중" : summary?.month ?? "DB 연결 필요"}</Text>
+          <Text style={styles.totalValue}>{loadState === "loading" ? "불러오는 중" : loadState === "error" ? "확인 필요" : `${total.toLocaleString("ko-KR")}원`}</Text>
           <Text style={styles.cardCaption}>이번 달 총액</Text>
         </View>
       </View>
       <Text style={styles.sectionTitle}>카테고리</Text>
-      {categories.length === 0 ? (
+      {loadState === "loading" ? (
+        <DataState title="비용 기록을 불러오는 중이에요" detail="잠시만 기다려 주세요." />
+      ) : loadState === "error" ? (
+        <DataState title="비용 기록을 불러오지 못했어요" detail="잠시 후 다시 확인해 주세요." />
+      ) : categories.length === 0 ? (
         <EmptyState image={ppunaImages.expense} title="비용 기록 없음" detail="병원 기록에 비용을 입력하면 여기에 모여요." />
       ) : (
         categories.map(([label, value], index) => (
@@ -1296,13 +1350,17 @@ function ProfileScreen({
   onLogout: () => void;
 }) {
   const [pet, setPet] = useState<PetProfile | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadPet() {
+      setLoadState("loading");
       const nextPet = await getCurrentPet();
-      if (isMounted) setPet(nextPet);
+      if (!isMounted) return;
+      setPet(nextPet);
+      setLoadState(nextPet ? "ready" : "error");
     }
 
     loadPet();
@@ -1326,17 +1384,25 @@ function ProfileScreen({
       <View style={styles.profileCard}>
         <Image source={ppunaImages.face} style={styles.profileImage} />
         <View style={styles.flex}>
-          <Text style={styles.profileName}>{pet?.name ?? "연결 필요"}</Text>
+          <Text style={styles.profileName}>{loadState === "loading" ? "불러오는 중" : pet?.name ?? "연결 필요"}</Text>
           <Text style={styles.cardCaption}>
-            {pet ? `${pet.species === "dog" ? "강아지" : pet.species} · ${pet.weight_kg ?? "-"}kg` : "API 연결을 확인해 주세요"}
+            {loadState === "loading" ? "프로필을 확인하고 있어요" : pet ? `${pet.species === "dog" ? "강아지" : pet.species} · ${pet.weight_kg ?? "-"}kg` : "API 연결을 확인해 주세요"}
           </Text>
-          <Text style={styles.condition}>{pet?.conditions.length ? pet.conditions.join(", ") : "건강 정보 없음"}</Text>
+          <Text style={styles.condition}>
+            {loadState === "loading"
+              ? "건강 정보를 불러오는 중"
+              : loadState === "error"
+                ? "건강 정보를 불러오지 못했어요"
+                : pet?.conditions.length
+                  ? pet.conditions.join(", ")
+                  : "건강 정보 없음"}
+          </Text>
         </View>
       </View>
       <Text style={styles.sectionTitle}>건강 정보</Text>
-      <InfoRow label="주요 질환" value={pet?.conditions.join(", ") || "정보 없음"} />
-      <InfoRow label="주의사항" value={pet?.caution_notes ?? "정보 없음"} />
-      <InfoRow label="생일" value={pet?.birth_date ?? "정보 없음"} />
+      <InfoRow label="주요 질환" value={loadState === "loading" ? "불러오는 중..." : loadState === "error" ? "불러오지 못했어요" : pet?.conditions.join(", ") || "정보 없음"} />
+      <InfoRow label="주의사항" value={loadState === "loading" ? "불러오는 중..." : loadState === "error" ? "불러오지 못했어요" : pet?.caution_notes ?? "정보 없음"} />
+      <InfoRow label="생일" value={loadState === "loading" ? "불러오는 중..." : loadState === "error" ? "불러오지 못했어요" : pet?.birth_date ?? "정보 없음"} />
       <Text style={styles.sectionTitle}>설정</Text>
       <SettingRow label="알림" />
       <SettingRow label="데이터 내보내기" onPress={handleExport} />
@@ -1469,6 +1535,10 @@ function EmptyState({ image, title, detail }: { image: ImageSourcePropType; titl
       <Text style={styles.cardCaption}>{detail}</Text>
     </View>
   );
+}
+
+function DataState({ title, detail }: { title: string; detail: string }) {
+  return <EmptyState image={ppunaImages.face} title={title} detail={detail} />;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
