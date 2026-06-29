@@ -440,85 +440,87 @@ function BreathingMeasureScreen({ onClose }: { onClose: (shouldRefresh?: boolean
   return (
     <View style={styles.breathingScreen}>
       <StatusBar style="light" />
-      <View style={styles.breathingHeader}>
-        <Pressable onPress={() => onClose(false)} style={styles.closeButton}>
-          <Text style={styles.closeButtonText}>←</Text>
-        </Pressable>
-        <View style={styles.flex}>
-          <Text style={styles.breathingTitle}>호흡 수 측정</Text>
-          <Text style={styles.breathingSubtitle}>잠든 뒤 안정 상태에서 숨쉴 때마다 탭해요</Text>
+      <ScrollView contentContainerStyle={styles.breathingMeasureContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.breathingHeader}>
+          <Pressable onPress={() => onClose(false)} style={styles.closeButton}>
+            <Text style={styles.closeButtonText}>←</Text>
+          </Pressable>
+          <View style={styles.flex}>
+            <Text style={styles.breathingTitle}>호흡 수 측정</Text>
+            <Text style={styles.breathingSubtitle}>잠든 뒤 안정 상태에서 숨쉴 때마다 탭해요</Text>
+          </View>
+          <Image source={ppunaImages.sleep} style={styles.breathingHeaderImage} />
         </View>
-        <Image source={ppunaImages.sleep} style={styles.breathingHeaderImage} />
-      </View>
 
-      <View style={styles.durationRow}>
-        {[15, 30, 60].map((value) => (
-          <Pressable
-            key={value}
-            onPress={() => reset(value)}
-            style={[styles.durationChip, duration === value && styles.durationChipActive]}
-          >
-            <Text style={[styles.durationText, duration === value && styles.durationTextActive]}>{value}초</Text>
+        <View style={styles.durationRow}>
+          {[15, 30, 60].map((value) => (
+            <Pressable
+              key={value}
+              onPress={() => reset(value)}
+              style={[styles.durationChip, duration === value && styles.durationChipActive]}
+            >
+              <Text style={[styles.durationText, duration === value && styles.durationTextActive]}>{value}초</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <Text style={styles.remainingLabel}>{isDone ? "측정 완료" : isRunning ? "측정 중" : "탭하면 시작해요"}</Text>
+        <Text style={styles.remainingTime}>00:{String(remaining).padStart(2, "0")}</Text>
+
+        <View style={styles.liveCoughCard}>
+          <Text style={styles.liveCoughLabel}>측정 중 기침 여부</Text>
+          <View style={styles.coughToggleRow}>
+            <Pressable
+              style={[styles.coughToggle, !coughObserved && styles.coughToggleActive]}
+              onPress={() => setCoughObserved(false)}
+            >
+              <Text style={[styles.coughToggleText, !coughObserved && styles.coughToggleTextActive]}>기침 X</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.coughToggle, coughObserved && styles.coughToggleActive]}
+              onPress={() => setCoughObserved(true)}
+            >
+              <Text style={[styles.coughToggleText, coughObserved && styles.coughToggleTextActive]}>기침 O</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        <Pressable style={styles.tapPanel} onPress={handleTap}>
+          <Image source={ppunaImages.sleep} style={styles.tapImage} />
+          <Text style={styles.tapCount}>{count}</Text>
+          <Text style={styles.tapHint}>숨쉴 때마다 탭</Text>
+        </Pressable>
+
+        <View style={styles.breathingActions}>
+          <Pressable style={styles.secondaryDarkButton} onPress={() => setCount((value) => Math.max(0, value - 1))}>
+            <Text style={styles.darkButtonLabel}>되돌리기</Text>
           </Pressable>
-        ))}
-      </View>
-
-      <Text style={styles.remainingLabel}>{isDone ? "측정 완료" : isRunning ? "측정 중" : "탭하면 시작해요"}</Text>
-      <Text style={styles.remainingTime}>00:{String(remaining).padStart(2, "0")}</Text>
-
-      <View style={styles.liveCoughCard}>
-        <Text style={styles.liveCoughLabel}>측정 중 기침 여부</Text>
-        <View style={styles.coughToggleRow}>
-          <Pressable
-            style={[styles.coughToggle, !coughObserved && styles.coughToggleActive]}
-            onPress={() => setCoughObserved(false)}
-          >
-            <Text style={[styles.coughToggleText, !coughObserved && styles.coughToggleTextActive]}>기침 X</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.coughToggle, coughObserved && styles.coughToggleActive]}
-            onPress={() => setCoughObserved(true)}
-          >
-            <Text style={[styles.coughToggleText, coughObserved && styles.coughToggleTextActive]}>기침 O</Text>
+          <Pressable style={styles.secondaryDarkButton} onPress={() => reset()}>
+            <Text style={styles.darkButtonLabel}>다시 재기</Text>
           </Pressable>
         </View>
-      </View>
 
-      <Pressable style={styles.tapPanel} onPress={handleTap}>
-        <Image source={ppunaImages.sleep} style={styles.tapImage} />
-        <Text style={styles.tapCount}>{count}</Text>
-        <Text style={styles.tapHint}>숨쉴 때마다 탭</Text>
-      </Pressable>
-
-      <View style={styles.breathingActions}>
-        <Pressable style={styles.secondaryDarkButton} onPress={() => setCount((value) => Math.max(0, value - 1))}>
-          <Text style={styles.darkButtonLabel}>되돌리기</Text>
-        </Pressable>
-        <Pressable style={styles.secondaryDarkButton} onPress={() => reset()}>
-          <Text style={styles.darkButtonLabel}>다시 재기</Text>
-        </Pressable>
-      </View>
-
-      {isDone ? (
-        <View style={styles.resultCard}>
-          <Text style={styles.resultLabel}>분당 호흡 수</Text>
-          <Text style={styles.resultValue}>{bpm}회/분</Text>
-          <Text style={styles.resultCaption}>
-            {duration}초 동안 {count}회 측정
-          </Text>
-          <Text style={styles.resultCaption}>기침 {coughObserved ? "O" : "X"}로 저장됩니다</Text>
-          <Pressable style={styles.saveButton} onPress={handleSave} disabled={saveState === "saving"}>
-            <Text style={styles.saveButtonText}>{saveState === "saving" ? "저장 중" : "기록 저장"}</Text>
-          </Pressable>
-          <Text style={styles.saveStateText}>
-            {saveState === "saved"
-              ? "API에 저장됐어요"
-              : saveState === "local"
-                ? "API 연결이 없어 화면에서만 확인했어요"
-                : " "}
-          </Text>
-        </View>
-      ) : null}
+        {isDone ? (
+          <View style={styles.resultCard}>
+            <Text style={styles.resultLabel}>분당 호흡 수</Text>
+            <Text style={styles.resultValue}>{bpm}회/분</Text>
+            <Text style={styles.resultCaption}>
+              {duration}초 동안 {count}회 측정
+            </Text>
+            <Text style={styles.resultCaption}>기침 {coughObserved ? "O" : "X"}로 저장됩니다</Text>
+            <Pressable style={styles.saveButton} onPress={handleSave} disabled={saveState === "saving"}>
+              <Text style={styles.saveButtonText}>{saveState === "saving" ? "저장 중" : "기록 저장"}</Text>
+            </Pressable>
+            <Text style={styles.saveStateText}>
+              {saveState === "saved"
+                ? "API에 저장됐어요"
+                : saveState === "local"
+                  ? "API 연결이 없어 화면에서만 확인했어요"
+                  : " "}
+            </Text>
+          </View>
+        ) : null}
+      </ScrollView>
     </View>
   );
 }
@@ -2094,7 +2096,10 @@ const styles = StyleSheet.create({
   breathingScreen: {
     backgroundColor: colors.dark,
     flex: 1,
+  },
+  breathingMeasureContent: {
     padding: 24,
+    paddingBottom: 40,
     paddingTop: 58,
   },
   breathingHeader: {
@@ -2221,7 +2226,9 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   quickSaveContent: {
+    padding: 24,
     paddingBottom: 40,
+    paddingTop: 58,
   },
   formInput: {
     backgroundColor: colors.surface,
