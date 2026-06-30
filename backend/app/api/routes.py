@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.db import get_connection, hash_password, init_db
+from app.db import get_connection, hash_password
 from app.schemas.records import (
     AuthSession,
     BreathingRecord,
@@ -60,7 +60,6 @@ def _username_from_token(token: str) -> str | None:
 
 
 def _current_user_row(authorization: str | None = Header(default=None), token: str | None = None):
-    init_db()
     raw_token = token
     if authorization and authorization.startswith("Bearer "):
         raw_token = authorization.removeprefix("Bearer ").strip()
@@ -77,7 +76,6 @@ def _current_user_row(authorization: str | None = Header(default=None), token: s
 
 
 def _current_pet_row(user_id: str):
-    init_db()
     with get_connection() as connection:
         row = connection.execute("SELECT * FROM pets WHERE user_id = ? ORDER BY name LIMIT 1", (user_id,)).fetchone()
     if row is None:
@@ -295,7 +293,6 @@ def _date_key(value: str) -> str:
 
 @router.post("/auth/login", response_model=AuthSession)
 def login(credentials: UserLogin) -> AuthSession:
-    init_db()
     with get_connection() as connection:
         user = connection.execute("SELECT * FROM users WHERE username = ?", (credentials.username,)).fetchone()
         pet = None
@@ -322,25 +319,38 @@ def get_current_pet(authorization: str | None = Header(default=None)) -> PetProf
 @router.post("/pets", response_model=PetProfile)
 def create_pet(record: PetProfileCreate, authorization: str | None = Header(default=None)) -> PetProfile:
     user = _current_user_row(authorization)
-    pet_id = str(uuid4())
     with get_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO pets (
-                id, user_id, name, species, birth_date, weight_kg, conditions, caution_notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                pet_id,
-                user["id"],
-                record.name.strip(),
-                record.species,
-                record.birth_date.isoformat() if record.birth_date else None,
-                record.weight_kg,
-                ",".join(record.conditions),
-                record.caution_notes,
-            ),
+        existing = connection.execute(
+            "SELECT id FROM pets WHERE user_id = ? ORDER BY name LIMIT 1",
+            (user["id"],),
+        ).fetchone()
+        pet_id = existing["id"] if existing else str(uuid4())
+        values = (
+            record.name.strip(),
+            record.species,
+            record.birth_date.isoformat() if record.birth_date else None,
+            record.weight_kg,
+            ",".join(record.conditions),
+            record.caution_notes,
         )
+        if existing:
+            connection.execute(
+                """
+                UPDATE pets
+                SET name = ?, species = ?, birth_date = ?, weight_kg = ?, conditions = ?, caution_notes = ?
+                WHERE id = ?
+                """,
+                (*values, pet_id),
+            )
+        else:
+            connection.execute(
+                """
+                INSERT INTO pets (
+                    id, user_id, name, species, birth_date, weight_kg, conditions, caution_notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (pet_id, user["id"], *values),
+            )
         row = connection.execute("SELECT * FROM pets WHERE id = ?", (pet_id,)).fetchone()
     return _pet_from_row(row)
 

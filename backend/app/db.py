@@ -14,9 +14,11 @@ except ImportError:  # pragma: no cover - production installs this, tests can ru
 
 try:
     import psycopg
+    from psycopg_pool import ConnectionPool
     from psycopg.rows import dict_row
 except ImportError:  # pragma: no cover - optional in local SQLite-only setup
     psycopg = None
+    ConnectionPool = None
     dict_row = None
 
 if load_dotenv is not None and os.environ.get("PPUROUTINE_SKIP_DOTENV") != "1":
@@ -26,6 +28,7 @@ DB_PATH = Path(os.environ.get("PPUROUTINE_DB_PATH", Path(__file__).resolve().par
 DATABASE_URL = os.environ.get("DATABASE_URL")
 DEV_USER_ID = "00000000-0000-4000-8000-000000000001"
 BBUNU_USER_ID = "00000000-0000-4000-8000-000000000002"
+_postgres_pool = None
 
 
 def hash_password(password: str) -> str:
@@ -33,19 +36,20 @@ def hash_password(password: str) -> str:
 
 
 class PostgresConnection:
-    def __init__(self, database_url: str):
-        if psycopg is None or dict_row is None:
-            raise RuntimeError("psycopg is required when DATABASE_URL is set")
-        self.connection = psycopg.connect(database_url, row_factory=dict_row)
+    def __init__(self, connection_context):
+        self.connection_context = connection_context
+        self.connection = None
 
     def __enter__(self):
-        self.connection.__enter__()
+        self.connection = self.connection_context.__enter__()
         return self
 
     def __exit__(self, exc_type, exc, traceback):
-        return self.connection.__exit__(exc_type, exc, traceback)
+        return self.connection_context.__exit__(exc_type, exc, traceback)
 
     def execute(self, query: str, params=()):
+        if self.connection is None:
+            raise RuntimeError("Database connection is not open")
         return self.connection.execute(query.replace("?", "%s"), params)
 
 
@@ -53,9 +57,23 @@ def is_postgres() -> bool:
     return bool(DATABASE_URL)
 
 
+def _get_postgres_pool():
+    global _postgres_pool
+    if psycopg is None or ConnectionPool is None or dict_row is None:
+        raise RuntimeError("psycopg with pool support is required when DATABASE_URL is set")
+    if _postgres_pool is None:
+        _postgres_pool = ConnectionPool(
+            conninfo=DATABASE_URL,
+            min_size=1,
+            max_size=5,
+            kwargs={"row_factory": dict_row},
+        )
+    return _postgres_pool
+
+
 def get_connection():
     if DATABASE_URL:
-        return PostgresConnection(DATABASE_URL)
+        return PostgresConnection(_get_postgres_pool().connection())
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)

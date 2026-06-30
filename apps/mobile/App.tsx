@@ -40,6 +40,7 @@ import {
   getExportExcelUrl,
   getExpenseSummary,
   getHospitalVisits,
+  getLastApiError,
   getMealRecords,
   getMedicationLogs,
   getSuggestions,
@@ -238,14 +239,21 @@ function PetSetupScreen({
   const [conditions, setConditions] = useState("심장 관리, 신장 관리");
   const [cautionNotes, setCautionNotes] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [setupError, setSetupError] = useState("");
 
   async function handleCreate() {
     if (!name.trim()) return;
+    const normalizedBirthDate = normalizeOptionalDate(birthDate);
+    if (normalizedBirthDate === null) {
+      setSetupError("생일은 2012-03-14처럼 입력해 주세요.");
+      return;
+    }
     setSaveState("saving");
+    setSetupError("");
     const saved = await createPet({
       name: name.trim(),
       species: "dog",
-      birth_date: birthDate.trim() || undefined,
+      birth_date: normalizedBirthDate,
       weight_kg: parseOptionalNumber(weightKg),
       conditions: conditions
         .split(",")
@@ -254,6 +262,7 @@ function PetSetupScreen({
       caution_notes: cautionNotes.trim() || undefined,
     });
     setSaveState(saved ? "saved" : "error");
+    if (!saved) setSetupError(getLastApiError() ?? "저장에 실패했어요. 잠시 후 다시 시도해 주세요.");
     if (saved) setTimeout(onCreated, 400);
   }
 
@@ -281,7 +290,7 @@ function PetSetupScreen({
           <Pressable style={styles.saveButton} onPress={handleCreate} disabled={saveState === "saving"}>
             <Text style={styles.saveButtonText}>{saveState === "saving" ? "저장 중" : "등록하고 시작"}</Text>
           </Pressable>
-          {saveState === "error" ? <Text style={styles.errorText}>저장에 실패했어요. API 연결을 확인해 주세요.</Text> : null}
+          {setupError ? <Text style={styles.errorText}>{setupError}</Text> : null}
         </View>
         <Pressable style={styles.logoutTextButton} onPress={onLogout}>
           <Text style={styles.removeText}>다른 계정으로 로그인</Text>
@@ -1636,6 +1645,22 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (tab: Tab) => voi
 function parseOptionalNumber(value: string) {
   const parsed = Number(value.replace(/,/g, "").trim());
   return Number.isFinite(parsed) && value.trim() ? parsed : undefined;
+}
+
+function normalizeOptionalDate(value: string): string | undefined | null {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  const match = trimmed.match(/^(\d{4})\s*(?:[-./]|년)\s*(\d{1,2})\s*(?:[-./]|월)\s*(\d{1,2})\s*일?$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 function formatDosage(amount: string, unit: string) {

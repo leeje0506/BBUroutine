@@ -113,6 +113,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "https://bburoutine.onrender.
 const GET_CACHE_TTL_MS = 2 * 60 * 1000;
 let apiToken: string | null = null;
 let cacheGeneration = 0;
+let lastApiError: string | null = null;
 const responseCache = new Map<string, { value: unknown; expiresAt: number }>();
 const pendingGetRequests = new Map<string, Promise<unknown | null>>();
 
@@ -125,6 +126,10 @@ function invalidateApiCache() {
 export function setApiToken(token: string | null) {
   if (apiToken !== token) invalidateApiCache();
   apiToken = token;
+}
+
+export function getLastApiError() {
+  return lastApiError;
 }
 
 function authHeaders(): Record<string, string> {
@@ -186,6 +191,7 @@ async function getJson<T>(path: string): Promise<T | null> {
 async function postJson<T>(path: string, payload: Record<string, unknown>): Promise<T | null> {
   if (!API_URL) return null;
 
+  lastApiError = null;
   try {
     const response = await fetch(`${API_URL}${path}`, {
       method: "POST",
@@ -196,11 +202,18 @@ async function postJson<T>(path: string, payload: Record<string, unknown>): Prom
       body: JSON.stringify(payload),
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as { detail?: string | Array<{ msg?: string }> } | null;
+      lastApiError = Array.isArray(errorBody?.detail)
+        ? errorBody.detail[0]?.msg ?? "입력값을 확인해 주세요."
+        : errorBody?.detail ?? `요청에 실패했어요. (${response.status})`;
+      return null;
+    }
     const value = (await response.json()) as T;
     invalidateApiCache();
     return value;
   } catch {
+    lastApiError = "서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.";
     return null;
   }
 }
