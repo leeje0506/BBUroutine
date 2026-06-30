@@ -15,7 +15,7 @@ def auth_headers(username: str = "dev1", password: str = "dev1") -> dict[str, st
 def test_health() -> None:
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "version": "db-cache-v1"}
 
 
 def test_current_pet() -> None:

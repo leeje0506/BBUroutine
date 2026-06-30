@@ -178,6 +178,13 @@ def _init_sqlite() -> None:
                 memo TEXT,
                 FOREIGN KEY (pet_id) REFERENCES pets(id)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_pets_user_id ON pets(user_id);
+            CREATE INDEX IF NOT EXISTS idx_breathing_pet_measured ON breathing_records(pet_id, measured_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_medication_pet_logged ON medication_logs(pet_id, logged_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_meal_pet_logged ON meal_records(pet_id, logged_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_hospital_pet_visited ON hospital_visits(pet_id, visited_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_hospital_pet_next_visit ON hospital_visits(pet_id, next_visit_at);
             """
         )
         _ensure_sqlite_column(connection, "pets", "user_id", "TEXT")
@@ -270,6 +277,12 @@ def _init_postgres() -> None:
             memo TEXT
         )
         """,
+        "CREATE INDEX IF NOT EXISTS idx_pets_user_id ON pets(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_breathing_pet_measured ON breathing_records(pet_id, measured_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_medication_pet_logged ON medication_logs(pet_id, logged_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_meal_pet_logged ON meal_records(pet_id, logged_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_hospital_pet_visited ON hospital_visits(pet_id, visited_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_hospital_pet_next_visit ON hospital_visits(pet_id, next_visit_at)",
     ]
 
     with get_connection() as connection:

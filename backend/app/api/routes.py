@@ -3,6 +3,8 @@ import base64
 import hashlib
 import hmac
 import os
+from threading import Lock
+from time import monotonic
 from io import BytesIO
 from datetime import date, datetime, timedelta
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -33,6 +35,9 @@ from app.schemas.records import (
 
 router = APIRouter()
 AUTH_SECRET = os.environ.get("PPUROUTINE_AUTH_SECRET", "ppuroutine-local-dev-secret")
+PET_CACHE_TTL_SECONDS = 5 * 60
+_pet_cache: dict[str, tuple[float, dict]] = {}
+_pet_cache_lock = Lock()
 
 
 def _now() -> str:
@@ -80,22 +85,37 @@ def _current_user_row(authorization: str | None = Header(default=None), token: s
     return row
 
 
+def _cache_pet(username: str, row) -> dict:
+    value = dict(row)
+    _pet_cache[username] = (monotonic() + PET_CACHE_TTL_SECONDS, value)
+    return value
+
+
 def _current_pet_row_from_auth(authorization: str | None = None, token: str | None = None):
     username = _authenticated_username(authorization, token)
-    with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT pets.* FROM pets
-            JOIN users ON users.id = pets.user_id
-            WHERE users.username = ?
-            ORDER BY pets.name
-            LIMIT 1
-            """,
-            (username,),
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Pet not found")
-    return row
+    cached = _pet_cache.get(username)
+    if cached and cached[0] > monotonic():
+        return cached[1]
+
+    with _pet_cache_lock:
+        cached = _pet_cache.get(username)
+        if cached and cached[0] > monotonic():
+            return cached[1]
+
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT pets.* FROM pets
+                JOIN users ON users.id = pets.user_id
+                WHERE users.username = ?
+                ORDER BY pets.name
+                LIMIT 1
+                """,
+                (username,),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Pet not found")
+        return _cache_pet(username, row)
 
 
 def _current_pet_id_from_auth(authorization: str | None = None, token: str | None = None) -> str:
@@ -348,6 +368,7 @@ def login(credentials: UserLogin) -> AuthSession:
             "conditions": row["pet_conditions"],
             "caution_notes": row["pet_caution_notes"],
         }
+        _cache_pet(row["username"], pet)
 
     return AuthSession(
         token=_make_token(row["username"]),
@@ -398,6 +419,7 @@ def create_pet(record: PetProfileCreate, authorization: str | None = Header(defa
                 (pet_id, user["id"], *values),
             )
         row = connection.execute("SELECT * FROM pets WHERE id = ?", (pet_id,)).fetchone()
+    _cache_pet(user["username"], row)
     return _pet_from_row(row)
 
 
@@ -641,9 +663,10 @@ def get_suggestions(authorization: str | None = Header(default=None)) -> Suggest
         medication_names = _distinct_values(
             connection,
             """
-            SELECT DISTINCT medication_name FROM medication_logs
+            SELECT medication_name, MAX(logged_at) AS latest FROM medication_logs
             WHERE pet_id = ? AND medication_name IS NOT NULL AND medication_name != ''
-            ORDER BY logged_at DESC
+            GROUP BY medication_name
+            ORDER BY latest DESC
             LIMIT 20
             """,
             (pet_id,),
@@ -651,9 +674,10 @@ def get_suggestions(authorization: str | None = Header(default=None)) -> Suggest
         medication_dosages = _distinct_values(
             connection,
             """
-            SELECT DISTINCT dosage FROM medication_logs
+            SELECT dosage, MAX(logged_at) AS latest FROM medication_logs
             WHERE pet_id = ? AND dosage IS NOT NULL AND dosage != ''
-            ORDER BY logged_at DESC
+            GROUP BY dosage
+            ORDER BY latest DESC
             LIMIT 20
             """,
             (pet_id,),
@@ -661,9 +685,10 @@ def get_suggestions(authorization: str | None = Header(default=None)) -> Suggest
         food_names = _distinct_values(
             connection,
             """
-            SELECT DISTINCT food_name FROM meal_records
+            SELECT food_name, MAX(logged_at) AS latest FROM meal_records
             WHERE pet_id = ? AND food_name IS NOT NULL AND food_name != ''
-            ORDER BY logged_at DESC
+            GROUP BY food_name
+            ORDER BY latest DESC
             LIMIT 20
             """,
             (pet_id,),
@@ -671,9 +696,10 @@ def get_suggestions(authorization: str | None = Header(default=None)) -> Suggest
         hospital_names = _distinct_values(
             connection,
             """
-            SELECT DISTINCT hospital_name FROM hospital_visits
+            SELECT hospital_name, MAX(visited_at) AS latest FROM hospital_visits
             WHERE pet_id = ? AND hospital_name IS NOT NULL AND hospital_name != ''
-            ORDER BY visited_at DESC
+            GROUP BY hospital_name
+            ORDER BY latest DESC
             LIMIT 20
             """,
             (pet_id,),
